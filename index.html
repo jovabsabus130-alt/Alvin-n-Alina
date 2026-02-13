@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Valentine v18.1 - Hearts & Pearls</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Annie+Use+Your+Telescope&family=Shantell+Sans:wght@400;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -23,7 +21,11 @@
             display: flex; justify-content: center; align-items: center;
         }
 
-        canvas#particle-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
+        /* Optimization: GPU acceleration for canvas */
+        canvas#particle-canvas { 
+            position: fixed; inset: 0; pointer-events: none; z-index: 1; 
+            transform: translateZ(0); 
+        }
 
         .stage { display: none; flex-direction: column; align-items: center; width: 95%; max-width: 400px; z-index: 10; text-align: center; height: 100vh; justify-content: center; position: relative; }
         .stage.active { display: flex; }
@@ -45,23 +47,6 @@
         #yes-btn, #ready-btn { background: var(--primary); color: white; box-shadow: 0 4px 15px rgba(255, 77, 109, 0.4); z-index: 10; font-size: 1.2rem; }
         #no-btn { background: white; color: var(--primary); border: 2px solid var(--primary); position: relative; z-index: 100; white-space: nowrap; }
 
-        /* PRELOADER STYLES */
-        #preloader {
-            position: fixed; inset: 0; background: #ffb6c1; z-index: 9999;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            color: white; font-weight: bold;
-        }
-        .loader-heart { font-size: 3rem; animation: pulse 1s infinite; }
-        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.2); } }
-
-        @keyframes shake {
-            0% { transform: translateX(0); }
-            25% { transform: translateX(8px) rotate(5deg); }
-            50% { transform: translateX(-8px) rotate(-5deg); }
-            75% { transform: translateX(8px) rotate(5deg); }
-            100% { transform: translateX(0); }
-        }
-
         .heart-gallery { 
             position: relative; width: 100%; height: 350px; 
             display: flex; justify-content: center; align-items: center; margin: 20px 0;
@@ -72,6 +57,7 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.1); transition: all 0.7s cubic-bezier(0.175, 0.885, 0.32, 1.2);
             z-index: 5; cursor: pointer; display: flex; flex-direction: column; align-items: center;
             left: 50%; top: 50%; margin-left: -35px; margin-top: -42px;
+            will-change: transform; /* Performance hint */
         }
 
         .mini-polaroid img { width: 100%; height: 60px; object-fit: cover; pointer-events: none; }
@@ -114,13 +100,10 @@
 </head>
 <body>
 
-<div id="preloader">
-    <div class="loader-heart">❤️</div>
-    <p id="preloader-text">Loading Memories...</p>
-</div>
+<div style="display:none;" id="image-preloader"></div>
 
 <audio id="bg-music" preload="auto">
-    <source src="InShot_20260212_214321964.mp3" type="audio/mp3">
+    <source src="InShot_20260212_214321964.mp3.mpeg" type="audio/mp3">
 </audio> 
 
 <canvas id="particle-canvas"></canvas>
@@ -202,36 +185,16 @@ const imgSources = ["1.jpeg","2.jpeg","3.jpeg","4.jpeg","5.jpeg","6.jpeg","7.jpe
 const captions = ["Your Presence 🤍", "Your Smile 😊", "Every Moment 🫶", "My Love 🫴", "Our World 🌎", "Our Adventures 💗", "Our Dream 🌝", "Our Inside Jokes 🙈", "Simply us 🦢", "Your Eyes 👀"];
 const heartPattern = [{x: -55, y: -90}, {x: 55, y: -90}, {x: -95, y: -35}, {x: -32, y: -35}, {x: 32, y: -35}, {x: 95, y: -35}, {x: -65, y: 30}, {x: 0, y: 30}, {x: 65, y: 30}, {x: 0, y: 95}];
 
-// --- PROACTIVE PRELOADER LOGIC ---
-window.onload = () => {
-    let loadedCount = 0;
-    const totalToLoad = imgSources.length + 1; // Photos + Audio
-
-    function checkAllLoaded() {
-        loadedCount++;
-        if (loadedCount >= totalToLoad) {
-            document.getElementById('preloader').style.display = 'none';
-        }
-    }
-
-    // Preload Images
+// --- Optimization: Background Preloading ---
+(function preload() {
     imgSources.forEach(src => {
         const img = new Image();
         img.src = src;
-        img.onload = checkAllLoaded;
-        img.onerror = checkAllLoaded; // Continue even if one fails
+        document.getElementById('image-preloader').appendChild(img);
     });
+})();
 
-    // Preload Audio
-    const music = document.getElementById('bg-music');
-    if (music.readyState >= 3) {
-        checkAllLoaded();
-    } else {
-        music.oncanplaythrough = checkAllLoaded;
-    }
-};
-
-// --- Particles ---
+// --- Particles (Throttled for Performance) ---
 const pCanvas = document.getElementById('particle-canvas');
 const pCtx = pCanvas.getContext('2d');
 let particles = [];
@@ -242,17 +205,22 @@ class P {
     constructor() { this.reset(); } 
     reset() { 
         this.x = Math.random() * pCanvas.width; this.y = pCanvas.height + 20; 
-        this.s = Math.random() * 15 + 10; this.v = Math.random() * 1.5 + 0.5;
-        this.type = Math.random() > 0.4 ? '💌' : '❤️'; this.opacity = Math.random() * 0.5 + 0.5;
+        this.s = Math.random() * 12 + 8; // Smaller particles = less lag
+        this.v = Math.random() * 1.2 + 0.4;
+        this.type = Math.random() > 0.4 ? '💌' : '❤️'; this.opacity = Math.random() * 0.4 + 0.3;
     } 
     update() { this.y -= this.v; if(this.y < -20) this.reset(); } 
     draw() { pCtx.globalAlpha = this.opacity; pCtx.font = `${this.s}px serif`; pCtx.fillText(this.type, this.x, this.y); } 
 }
-for(let i=0; i<50; i++) particles.push(new P());
-function loop() { pCtx.clearRect(0,0,pCanvas.width,pCanvas.height); particles.forEach(p=>{p.update();p.draw();}); requestAnimationFrame(loop); }
+for(let i=0; i<35; i++) particles.push(new P()); // Reduced particle count for performance
+function loop() { 
+    pCtx.clearRect(0,0,pCanvas.width,pCanvas.height); 
+    particles.forEach(p=>{p.update();p.draw();}); 
+    requestAnimationFrame(loop); 
+}
 loop();
 
-// --- Intro & Smoother Lyric Logic ---
+// --- Audio & Lyric Logic ---
 const music = document.getElementById('bg-music');
 const lyricBox = document.getElementById('lyric-display');
 
@@ -260,12 +228,12 @@ document.getElementById('ready-btn').onclick = function() {
     this.parentElement.style.display = 'none';
     document.querySelector('#stage-0 h1').style.display = 'none';
     
-    // Play audio with error handling
-    const playPromise = music.play();
-    if (playPromise !== undefined) {
-        playPromise.catch(error => console.log("Playback blocked by browser"));
-    }
+    // Play with fallback
+    music.play().catch(() => {
+        console.log("Tap again to play audio");
+    });
     
+    // Smooth Lyric Logic
     music.ontimeupdate = () => {
         const currentTime = music.currentTime;
         const currentLine = lyrics.filter(l => currentTime >= l.time).pop();
@@ -275,7 +243,7 @@ document.getElementById('ready-btn').onclick = function() {
             setTimeout(() => {
                 lyricBox.innerText = currentLine.text;
                 lyricBox.style.opacity = 1;
-            }, 150);
+            }, 100);
         }
 
         if (currentTime >= 35.00) { 
@@ -285,14 +253,13 @@ document.getElementById('ready-btn').onclick = function() {
     };
 };
 
-// --- Navigation ---
+// --- Navigation & Gallery ---
 function nextStage(n) {
     document.querySelectorAll('.stage').forEach(s => s.classList.remove('active'));
     document.getElementById(`stage-${n}`).classList.add('active');
     if(n===2) formHeartShowcase();
 }
 
-// --- Stage 1: No Button Logic ---
 const noBtn = document.getElementById('no-btn');
 const handleNo = (e) => {
     e.preventDefault();
@@ -309,25 +276,28 @@ noBtn.addEventListener('touchstart', handleNo, {passive: false});
 noBtn.addEventListener('click', handleNo);
 document.getElementById('yes-btn').onclick = () => nextStage(2);
 
-// --- Stage 2: Gallery ---
 async function formHeartShowcase() {
     const gallery = document.getElementById('heart-gallery');
     gallery.innerHTML = '';
+    // Reduced delay for faster "instant" feel
     for (let i = 0; i < imgSources.length; i++) {
         const div = document.createElement('div');
         div.className = 'mini-polaroid';
         div.innerHTML = `<img src="${imgSources[i]}"><p>${captions[i]}</p>`;
         div.style.transform = "translate(0, 0) scale(0)";
         gallery.appendChild(div);
-        await new Promise(r => setTimeout(r, 100));
+        
+        await new Promise(r => setTimeout(r, 80));
         div.style.transform = `translate(0, 0) scale(2.8) rotate(${(Math.random()-0.5)*10}deg)`;
         div.style.zIndex = "1000";
-        await new Promise(r => setTimeout(r, 1300));
+        
+        await new Promise(r => setTimeout(r, 900)); // Faster transition
         const pos = heartPattern[i];
-        const finalTrans = `translate(${pos.x}px, ${pos.y}px) scale(1) rotate(${(Math.random()-0.5)*30}deg)`;
         div.style.zIndex = "5";
+        const finalTrans = `translate(${pos.x}px, ${pos.y}px) scale(1) rotate(${(Math.random()-0.5)*30}deg)`;
         div.style.transform = finalTrans;
         div.dataset.origTrans = finalTrans;
+
         div.onclick = (e) => {
             e.stopPropagation();
             if(div.classList.contains('zoomed')) {
@@ -344,10 +314,10 @@ async function formHeartShowcase() {
     setTimeout(() => {
         document.getElementById('swipe-wrap').classList.add('show');
         initSlider();
-    }, 600);
+    }, 400);
 }
 
-// --- Stage 2: Slider ---
+// --- Slider & Scratch ---
 function initSlider() {
     const knob = document.getElementById('heart-knob'), fill = document.getElementById('fill'), track = document.getElementById('track');
     let dragging = false;
@@ -367,17 +337,14 @@ function initSlider() {
     window.addEventListener('mouseup', () => dragging = false); window.addEventListener('touchend', () => dragging = false);
 }
 
-// --- Stage 3: Scratch ---
 const envelope = document.getElementById('envelope');
-envelope.onclick = () => { envelope.classList.add('open'); setTimeout(initScratch, 1); };
+envelope.onclick = () => { envelope.classList.add('open'); setTimeout(initScratch, 10); };
 
 function initScratch() {
     const canvas = document.getElementById('scratch-canvas');
     const ctx = canvas.getContext('2d');
     canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-    const grad = ctx.createLinearGradient(0,0,canvas.width,canvas.height);
-    grad.addColorStop(0,'#e2e2e2'); grad.addColorStop(0.5,'#ffb3c1'); grad.addColorStop(1,'#d1d1d1');
-    ctx.fillStyle = grad; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#e2e2e2'; ctx.fillRect(0,0,canvas.width,canvas.height);
     ctx.fillStyle='#ff4d6d'; ctx.font='bold 16px "Shantell Sans"'; ctx.textAlign='center';
     ctx.fillText('SCRATCH HERE', canvas.width/2, canvas.height/2+5);
     const scratch = (clientX, clientY) => {
